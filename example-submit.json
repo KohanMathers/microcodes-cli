@@ -1,0 +1,14 @@
+{
+  "title": "Hello World in Python",
+  "summary": "A simple Hello World script in Python.",
+  "description": "Prints `Hello, World!` to stdout. A classic starting point.",
+  "tags": ["python", "beginner"],
+  "language": { "name": "Python", "version": "3" },
+  "records": [
+    {
+      "type": "code",
+      "name": "hello.py",
+      "payload": "print(\"Hello, World!\")\n"
+    }
+  ]
+}
