@@ -702,6 +702,39 @@ fn fmt_ts(v: &Value, key: &str) -> String {
     format!("{y}-{:02}-{:02} {:02}:{:02}", m + 1, day, hh, mm)
 }
 
+fn uuid7_created(id: &str) -> String {
+    let hex: String = id.chars().filter(|c| *c != '-').collect();
+    if hex.len() < 12 {
+        return String::new();
+    }
+    let ms = match u64::from_str_radix(&hex[..12], 16) {
+        Ok(v) => v as i64,
+        Err(_) => return String::new(),
+    };
+    let secs = ms / 1000;
+    let days = secs / 86400;
+    let mut y = 1970u32;
+    let mut rem = days as u32;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if rem < days_in_year { break; }
+        rem -= days_in_year;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [31u32, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    for &md in &month_days {
+        if rem < md { break; }
+        rem -= md;
+        m += 1;
+    }
+    let day = rem + 1;
+    let hh = (secs % 86400) / 3600;
+    let mm = (secs % 3600) / 60;
+    format!("{y}-{:02}-{:02} {:02}:{:02} UTC", m + 1, day, hh, mm)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -1598,12 +1631,15 @@ fn cmd_whoami(ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
+    let id = str_val(&data, "id");
+    let created = uuid7_created(&id);
     print_detail(&[
         ("Username", str_val(&data, "username")),
-        ("ID", str_val(&data, "id")),
+        ("ID", id),
         ("Email", str_val(&data, "email")),
         ("Bio", str_val(&data, "description")),
         ("Role", str_val(&data, "role")),
+        ("Created", created),
     ]);
     Ok(())
 }
