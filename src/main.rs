@@ -2,7 +2,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use reqwest::blocking::Client as HttpClient;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::{self, IsTerminal, Read, Write as IoWrite};
+use std::path::Path;
 use std::process;
 
 const DEFAULT_BASE_URL: &str = "https://micro.codes";
@@ -184,6 +186,9 @@ struct SubmitArgs {
     /// Path to snippet JSON file (reads from stdin if omitted)
     #[arg(long)]
     file: Option<String>,
+    /// Path to a folder containing meta.json and source files
+    #[arg(long)]
+    folder: Option<String>,
 }
 
 #[derive(Args)]
@@ -949,10 +954,121 @@ fn cmd_my_snippets(ctx: &Context) -> Result<(), String> {
     Ok(())
 }
 
+fn ext_to_language(ext: &str) -> Option<&'static str> {
+    match ext {
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "js" | "mjs" | "cjs" => Some("javascript"),
+        "ts" | "mts" | "cts" => Some("typescript"),
+        "go" => Some("go"),
+        "java" => Some("java"),
+        "c" | "h" => Some("c"),
+        "cpp" | "cc" | "cxx" | "hpp" => Some("c++"),
+        "cs" => Some("c#"),
+        "rb" => Some("ruby"),
+        "php" => Some("php"),
+        "swift" => Some("swift"),
+        "kt" | "kts" => Some("kotlin"),
+        "sh" | "bash" => Some("bash"),
+        "ps1" => Some("powershell"),
+        "html" | "htm" => Some("html"),
+        "css" => Some("css"),
+        "scss" | "sass" => Some("scss"),
+        "json" => Some("json"),
+        "yaml" | "yml" => Some("yaml"),
+        "toml" => Some("toml"),
+        "sql" => Some("sql"),
+        "lua" => Some("lua"),
+        "r" => Some("r"),
+        "ex" | "exs" => Some("elixir"),
+        "hs" => Some("haskell"),
+        "clj" | "cljs" => Some("clojure"),
+        "ml" | "mli" => Some("ocaml"),
+        "dart" => Some("dart"),
+        "zig" => Some("zig"),
+        _ => None,
+    }
+}
+
+fn build_folder_payload(folder: &str) -> Result<Value, String> {
+    let folder_path = Path::new(folder);
+    if !folder_path.is_dir() {
+        return Err(format!("'{}' is not a directory", folder));
+    }
+
+    let meta_path = folder_path.join("meta.json");
+    let meta_raw = std::fs::read_to_string(&meta_path)
+        .map_err(|e| format!("Failed to read meta.json: {}", e))?;
+    let mut payload: Value = serde_json::from_str(&meta_raw)
+        .map_err(|e| format!("Invalid JSON in meta.json: {}", e))?;
+
+    let mut records: Vec<Value> = Vec::new();
+    let mut lang_counts: HashMap<&'static str, usize> = HashMap::new();
+
+    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    collect_files(folder_path, &mut paths);
+    paths.sort();
+
+    for path in &paths {
+        if path.file_name().map(|n| n == "meta.json").unwrap_or(false)
+            && path.parent().map(|p| p == folder_path).unwrap_or(false)
+        {
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(folder_path)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let code = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read '{}': {}", rel, e))?;
+
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if let Some(lang) = ext_to_language(ext) {
+                *lang_counts.entry(lang).or_insert(0) += 1;
+            }
+        }
+
+        records.push(json!({ "type": "code", "name": rel, "payload": code }));
+    }
+
+    if !records.is_empty() {
+        payload["records"] = Value::Array(records);
+    }
+
+    if let Some(dominant) = lang_counts.into_iter().max_by_key(|(_, c)| *c).map(|(l, _)| l) {
+        payload["language"] = json!({ "name": dominant });
+    }
+
+    Ok(payload)
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+}
+
 fn cmd_submit(args: SubmitArgs, ctx: &Context) -> Result<(), String> {
-    let raw = read_stdin_or_file(args.file.as_deref())?;
-    let payload: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    if args.file.is_some() && args.folder.is_some() {
+        return Err("Cannot use both --file and --folder".to_string());
+    }
+
+    let payload: Value = if let Some(folder) = args.folder.as_deref() {
+        build_folder_payload(folder)?
+    } else {
+        let raw = read_stdin_or_file(args.file.as_deref())?;
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid JSON: {}", e))?
+    };
 
     match ctx.get("/api/schema") {
         Ok(schema) => {

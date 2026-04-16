@@ -1,0 +1,1 @@
+This entire folder was submitted as one using `mcodes submit --folder example-multi-submit/`
