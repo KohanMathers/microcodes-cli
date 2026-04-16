@@ -158,6 +158,15 @@ enum Commands {
         /// Feedback message
         message: String,
     },
+
+    /// Check for a newer release and update the binary if available
+    Update,
+
+    /// Save your API token to the shell environment
+    Token {
+        /// Your Microcodes API token
+        token: String,
+    },
 }
 
 #[derive(Args)]
@@ -2012,6 +2021,253 @@ fn cmd_report(kind: &str, id: &str, reason: &str, ctx: &Context) -> Result<(), S
     Ok(())
 }
 
+fn cmd_token(token: &str) -> Result<(), String> {
+    persist_token(token)
+}
+
+#[cfg(unix)]
+fn persist_token(token: &str) -> Result<(), String> {
+    let home = std::env::var("HOME")
+        .map_err(|_| "$HOME is not set — cannot locate shell rc file".to_string())?;
+    let home = std::path::Path::new(&home);
+
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    let shell_name = std::path::Path::new(&shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("sh")
+        .to_string();
+
+    let (rc_path, export_line) = match shell_name.as_str() {
+        "zsh" => (
+            home.join(".zshrc"),
+            format!("export MICROCODES_API_TOKEN={}", token),
+        ),
+        "fish" => (
+            home.join(".config/fish/config.fish"),
+            format!("set -Ux MICROCODES_API_TOKEN {}", token),
+        ),
+        _ => (
+            home.join(".bashrc"),
+            format!("export MICROCODES_API_TOKEN={}", token),
+        ),
+    };
+
+    if let Some(parent) = rc_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let existing = std::fs::read_to_string(&rc_path).unwrap_or_default();
+
+    let has_existing = existing.lines().any(|l| {
+        let t = l.trim();
+        !t.starts_with('#') && t.contains("MICROCODES_API_TOKEN")
+    });
+
+    let new_content = if has_existing {
+        let mut replaced = false;
+        let lines: Vec<&str> = existing
+            .lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                if !t.starts_with('#') && t.contains("MICROCODES_API_TOKEN") {
+                    if !replaced {
+                        replaced = true;
+                        Some(export_line.as_str())
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(l)
+                }
+            })
+            .collect();
+        let mut out = lines.join("\n");
+        if existing.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    } else {
+        let mut out = existing.clone();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&export_line);
+        out.push('\n');
+        out
+    };
+
+    std::fs::write(&rc_path, &new_content)
+        .map_err(|e| format!("Failed to write {}: {}", rc_path.display(), e))?;
+
+    print_success(&format!("Token written to {}.", rc_path.display()));
+    println!("  Run:  source {}", rc_path.display());
+    println!("  Or open a new terminal session.");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn persist_token(token: &str) -> Result<(), String> {
+    // Escape single quotes for PowerShell string literal
+    let escaped = token.replace('\'', "''");
+    let ps_cmd = format!(
+        "[System.Environment]::SetEnvironmentVariable('MICROCODES_API_TOKEN', '{}', 'User')",
+        escaped
+    );
+
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+        .status()
+        .map_err(|e| format!("Failed to run PowerShell: {}", e))?;
+
+    if !status.success() {
+        return Err("PowerShell command failed — token was not saved.".to_string());
+    }
+
+    print_success("Token saved to your user environment variables.");
+    println!("  Restart your terminal for the change to take effect.");
+    Ok(())
+}
+
+fn parse_version(v: &str) -> (u32, u32, u32) {
+    let mut parts = v.split('.').filter_map(|p| p.parse::<u32>().ok());
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
+fn platform_artifact() -> Result<&'static str, String> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    return Ok("microcodes-linux-x86_64");
+
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    return Ok("microcodes-linux-aarch64");
+
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    return Ok("microcodes-macos-x86_64");
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    return Ok("microcodes-macos-aarch64");
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    return Ok("microcodes-windows-x86_64.exe");
+
+    #[cfg(not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+    )))]
+    return Err("Self-update is not supported on this platform.".to_string());
+}
+
+fn cmd_update(http: &HttpClient) -> Result<(), String> {
+    let current = env!("CARGO_PKG_VERSION");
+
+    println!("Current version:  {}", current);
+    print!("Checking for updates... ");
+    io::stdout().flush().ok();
+
+    let resp = http
+        .get("https://api.github.com/repos/KohanMathers/microcodes-cli/releases/latest")
+        .send()
+        .map_err(|e| format!("Failed to fetch release info: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned HTTP {}", resp.status()));
+    }
+
+    let release: Value = resp
+        .json()
+        .map_err(|e| format!("Failed to parse release JSON: {}", e))?;
+
+    let tag = release
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or("No tag_name in release response")?;
+
+    let latest = tag.trim_start_matches('v');
+    println!("Latest version:   {}", latest);
+
+    if parse_version(latest) <= parse_version(current) {
+        println!("{}", "Already up to date.".green());
+        return Ok(());
+    }
+
+    let artifact_name = platform_artifact()?;
+
+    let assets = release
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .ok_or("No assets in release response")?;
+
+    let download_url = assets
+        .iter()
+        .find(|a| a.get("name").and_then(|v| v.as_str()) == Some(artifact_name))
+        .and_then(|a| a.get("browser_download_url").and_then(|v| v.as_str()))
+        .ok_or_else(|| format!("Asset '{}' not found in release", artifact_name))?
+        .to_string();
+
+    println!("Downloading {}...", artifact_name);
+
+    let dl = http
+        .get(&download_url)
+        .send()
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    if !dl.status().is_success() {
+        return Err(format!("Download returned HTTP {}", dl.status()));
+    }
+
+    let bytes = dl
+        .bytes()
+        .map_err(|e| format!("Failed to read downloaded binary: {}", e))?;
+
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Cannot determine current executable path: {}", e))?;
+
+    let tmp_path = exe_path.with_extension("tmp");
+
+    {
+        let mut f = std::fs::File::create(&tmp_path)
+            .map_err(|e| format!("Cannot write to {}: {}", tmp_path.display(), e))?;
+        f.write_all(&bytes)
+            .map_err(|e| format!("Failed to write binary: {}", e))?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("Failed to set executable permissions: {}", e))?;
+    }
+
+    // Atomic replacement
+    #[cfg(unix)]
+    std::fs::rename(&tmp_path, &exe_path)
+        .map_err(|e| format!("Failed to replace binary: {}", e))?;
+
+    #[cfg(windows)]
+    {
+        let old_path = exe_path.with_extension("old");
+        let _ = std::fs::remove_file(&old_path);
+        std::fs::rename(&exe_path, &old_path)
+            .map_err(|e| format!("Failed to move current binary aside: {}", e))?;
+        if let Err(e) = std::fs::rename(&tmp_path, &exe_path) {
+            let _ = std::fs::rename(&old_path, &exe_path);
+            return Err(format!("Failed to place new binary: {}", e));
+        }
+        let _ = std::fs::remove_file(&old_path);
+    }
+
+    print_success(&format!("Updated to v{}.", latest));
+    Ok(())
+}
+
 fn cmd_feedback(message: &str, ctx: &Context) -> Result<(), String> {
     let data = ctx.auth_post("/api/feedback", json!({"message": message}))?;
 
@@ -2073,6 +2329,8 @@ fn main() {
         Commands::Health => cmd_health(&ctx),
         Commands::Report { kind, id, reason } => cmd_report(&kind, &id, &reason, &ctx),
         Commands::Feedback { message } => cmd_feedback(&message, &ctx),
+        Commands::Update => cmd_update(&ctx.http),
+        Commands::Token { token } => cmd_token(&token),
     };
 
     if let Err(e) = result {
