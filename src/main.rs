@@ -86,6 +86,9 @@ enum Commands {
     Bookmark {
         /// Snippet ID
         id: String,
+        /// Remove the bookmark instead of adding it
+        #[arg(long)]
+        remove: bool,
     },
 
     /// Print the JSON schema for snippet submission
@@ -237,8 +240,8 @@ enum VoteDirection {
 impl VoteDirection {
     fn as_str(&self) -> &str {
         match self {
-            Self::Up => "upvote",
-            Self::Down => "downvote",
+            Self::Up => "up",
+            Self::Down => "down",
             Self::Remove => "remove",
         }
     }
@@ -886,7 +889,7 @@ fn cmd_search(args: SearchArgs, ctx: &Context) -> Result<(), String> {
         params.push(("page", v.to_string()));
     }
 
-    let data = ctx.get_q("/api/search", &params)?;
+    let data = ctx.get_q("/api/snippets", &params)?;
 
     if ctx.json_output {
         print_json(&data);
@@ -903,7 +906,7 @@ fn cmd_search(args: SearchArgs, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_get(id: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx.get_q("/api/search", &[("id", id.to_string())])?;
+    let data = ctx.get(&format!("/api/snippets/{}", id))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -925,7 +928,7 @@ fn cmd_get(id: &str, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_ids(ids: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx.get_q("/api/ids", &[("ids", ids.to_string())])?;
+    let data = ctx.get_q("/api/snippets/by-ids", &[("ids", ids.to_string())])?;
 
     if ctx.json_output {
         print_json(&data);
@@ -938,7 +941,7 @@ fn cmd_ids(ids: &str, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_my_snippets(ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_get("/api/my-snippets")?;
+    let data = ctx.auth_get("/api/snippets/mine")?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1095,7 +1098,7 @@ fn cmd_submit(args: SubmitArgs, ctx: &Context) -> Result<(), String> {
         Err(e) => eprintln!("Warning: could not fetch schema for validation: {}", e),
     }
 
-    let data = ctx.auth_post("/api/submit", payload)?;
+    let data = ctx.auth_post("/api/snippets", payload)?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1118,7 +1121,7 @@ fn cmd_delete(args: DeleteArgs, ctx: &Context) -> Result<(), String> {
         }
     }
 
-    let data = ctx.auth_delete(&format!("/api/delete/{}", args.id))?;
+    let data = ctx.auth_delete(&format!("/api/snippets/{}", args.id))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1150,9 +1153,11 @@ fn cmd_patch(args: PatchArgs, ctx: &Context) -> Result<(), String> {
         return Err("No fields specified to patch. Use --title, --description, or --field key=value.".to_string());
     }
 
+    let body = json!({"patch": ops});
+
     let data = ctx.auth_patch(
-        "/api/submit",
-        json!({ "id": args.id, "patch": ops }),
+        &format!("/api/snippets/{}", args.id),
+        body,
     )?;
 
     if ctx.json_output {
@@ -1242,9 +1247,9 @@ fn cmd_metrics(id: &str, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_vote(id: &str, direction: VoteDirection, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post(
-        "/api/vote",
-        json!({"snippetId": id, "voteType": direction.as_str()}),
+    let data = ctx.auth_put(
+        &format!("/api/snippets/{}/vote", id),
+        json!({"value": direction.as_str()}),
     )?;
 
     if ctx.json_output {
@@ -1256,8 +1261,11 @@ fn cmd_vote(id: &str, direction: VoteDirection, ctx: &Context) -> Result<(), Str
     Ok(())
 }
 
-fn cmd_bookmark(id: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post("/api/bookmark", json!({"snippetId": id}))?;
+fn cmd_bookmark(id: &str, value: bool, ctx: &Context) -> Result<(), String> {
+    let data = ctx.auth_put(
+        &format!("/api/snippets/{}/bookmark", id),
+        json!({"value": value}),
+    )?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1265,7 +1273,7 @@ fn cmd_bookmark(id: &str, ctx: &Context) -> Result<(), String> {
     }
 
     let msg = data
-        .get("bookmarked")
+        .get("userBookmarked")
         .and_then(|v| v.as_bool())
         .map(|b| if b { "Bookmarked." } else { "Bookmark removed." })
         .unwrap_or("Done.");
@@ -1309,11 +1317,11 @@ fn cmd_comment(args: CommentArgs, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_comment_add(args: CommentAddArgs, ctx: &Context) -> Result<(), String> {
-    let mut body = json!({"snippetId": args.snippet_id, "comment": args.text});
+    let mut body = json!({"comment": args.text});
     if let Some(reply_to) = args.reply_to {
-        body["replyTo"] = json!(reply_to);
+        body["parentCommentId"] = json!(reply_to);
     }
-    let data = ctx.auth_post("/api/comment", body)?;
+    let data = ctx.auth_post(&format!("/api/snippets/{}/comments", args.snippet_id), body)?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1328,9 +1336,9 @@ fn cmd_comment_add(args: CommentAddArgs, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_comment_vote(args: CommentVoteArgs, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post(
-        "/api/comment/vote",
-        json!({"commentId": args.comment_id, "voteType": args.direction.as_str()}),
+    let data = ctx.auth_put(
+        &format!("/api/comments/{}/vote", args.comment_id),
+        json!({"value": args.direction.as_str()}),
     )?;
 
     if ctx.json_output {
@@ -1347,9 +1355,9 @@ fn cmd_comment_vote(args: CommentVoteArgs, ctx: &Context) -> Result<(), String> 
 }
 
 fn cmd_comment_edit(args: CommentEditArgs, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post(
-        "/api/comment/edit",
-        json!({"commentId": args.comment_id, "text": args.text}),
+    let data = ctx.auth_patch(
+        &format!("/api/comments/{}", args.comment_id),
+        json!({"comment": args.text}),
     )?;
 
     if ctx.json_output {
@@ -1370,10 +1378,7 @@ fn cmd_comment_delete(args: CommentDeleteArgs, ctx: &Context) -> Result<(), Stri
         }
     }
 
-    let data = ctx.auth_post(
-        "/api/comment/delete",
-        json!({"commentId": args.comment_id}),
-    )?;
+    let data = ctx.auth_delete(&format!("/api/comments/{}", args.comment_id))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1701,7 +1706,7 @@ fn cmd_requests_delete(args: RequestDeleteArgs, ctx: &Context) -> Result<(), Str
 
 fn cmd_requests_status(args: RequestStatusArgs, ctx: &Context) -> Result<(), String> {
     let data = ctx.auth_patch(
-        &format!("/api/requests/{}/status", args.id),
+        &format!("/api/requests/{}", args.id),
         json!({"status": args.status}),
     )?;
 
@@ -1722,8 +1727,8 @@ fn cmd_requests_fulfill(
     snippet_id: &str,
     ctx: &Context,
 ) -> Result<(), String> {
-    let data = ctx.auth_post(
-        &format!("/api/requests/{}/fulfill", request_id),
+    let data = ctx.auth_put(
+        &format!("/api/requests/{}/fulfillment", request_id),
         json!({"snippetId": snippet_id}),
     )?;
 
@@ -1740,7 +1745,7 @@ fn cmd_requests_fulfill(
 }
 
 fn cmd_whoami(ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_get("/api/auth/me")?;
+    let data = ctx.auth_get("/api/me")?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1763,7 +1768,7 @@ fn cmd_whoami(ctx: &Context) -> Result<(), String> {
 fn cmd_sessions(args: SessionsArgs, ctx: &Context) -> Result<(), String> {
     match args.action {
         None => {
-            let data = ctx.auth_get("/api/auth/sessions")?;
+            let data = ctx.auth_get("/api/me/sessions")?;
             if ctx.json_output {
                 print_json(&data);
                 return Ok(());
@@ -1791,7 +1796,7 @@ fn cmd_sessions(args: SessionsArgs, ctx: &Context) -> Result<(), String> {
                     return Ok(());
                 }
             }
-            let data = ctx.auth_post("/api/auth/sessions/disconnect", json!({}))?;
+            let data = ctx.auth_delete("/api/me/sessions/others")?;
             if ctx.json_output {
                 print_json(&data);
                 return Ok(());
@@ -1863,7 +1868,7 @@ fn cmd_passkeys(args: PasskeysArgs, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_username(username: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post("/api/auth/username", json!({"username": username}))?;
+    let data = ctx.auth_patch("/api/me/profile/username", json!({"username": username}))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1875,7 +1880,7 @@ fn cmd_username(username: &str, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_bio(bio: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post("/api/auth/description", json!({"description": bio}))?;
+    let data = ctx.auth_patch("/api/me/profile/description", json!({"description": bio}))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1891,26 +1896,32 @@ fn cmd_privacy(args: PrivacyArgs, ctx: &Context) -> Result<(), String> {
     if let Some(v) = args.visibility {
         body.insert("visibility".to_string(), json!(v));
     }
-    if let Some(v) = args.show_bio {
-        body.insert("showBio".to_string(), json!(v));
-    }
-    if let Some(v) = args.show_snippets {
-        body.insert("showSnippets".to_string(), json!(v));
-    }
-    if let Some(v) = args.show_lists {
-        body.insert("showLists".to_string(), json!(v));
-    }
-    if let Some(v) = args.show_comments {
-        body.insert("showComments".to_string(), json!(v));
-    }
     if let Some(v) = args.default_list_visibility {
         body.insert("defaultListVisibility".to_string(), json!(v));
     }
+
+    let mut show = serde_json::Map::new();
+    if let Some(v) = args.show_bio {
+        show.insert("bio".to_string(), json!(v));
+    }
+    if let Some(v) = args.show_snippets {
+        show.insert("snippets".to_string(), json!(v));
+    }
+    if let Some(v) = args.show_lists {
+        show.insert("lists".to_string(), json!(v));
+    }
+    if let Some(v) = args.show_comments {
+        show.insert("comments".to_string(), json!(v));
+    }
+    if !show.is_empty() {
+        body.insert("show".to_string(), Value::Object(show));
+    }
+
     if body.is_empty() {
         return Err("No privacy settings specified.".to_string());
     }
 
-    let data = ctx.auth_post("/api/auth/privacy", Value::Object(body))?;
+    let data = ctx.auth_patch("/api/me/profile/privacy", Value::Object(body))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1922,7 +1933,7 @@ fn cmd_privacy(args: PrivacyArgs, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_unlink(provider: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx.auth_post("/api/auth/unlink", json!({"provider": provider}))?;
+    let data = ctx.auth_delete(&format!("/api/me/providers/{}", provider))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1945,7 +1956,7 @@ fn cmd_delete_account(ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
-    let data = ctx.auth_delete("/api/auth/delete")?;
+    let data = ctx.auth_delete("/api/me")?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1988,8 +1999,8 @@ fn cmd_health(ctx: &Context) -> Result<(), String> {
 
 fn cmd_report(kind: &str, id: &str, reason: &str, ctx: &Context) -> Result<(), String> {
     let data = ctx.auth_post(
-        "/api/report",
-        json!({"type": kind, "id": id, "reason": reason}),
+        "/api/reports",
+        json!({"targetType": kind, "targetId": id, "reason": reason}),
     )?;
 
     if ctx.json_output {
@@ -2045,7 +2056,7 @@ fn main() {
         Commands::Diff(a) => cmd_diff(a, &ctx),
         Commands::Metrics { id } => cmd_metrics(&id, &ctx),
         Commands::Vote { id, direction } => cmd_vote(&id, direction, &ctx),
-        Commands::Bookmark { id } => cmd_bookmark(&id, &ctx),
+        Commands::Bookmark { id, remove } => cmd_bookmark(&id, !remove, &ctx),
         Commands::Schema => cmd_schema(&ctx),
         Commands::Markdown(a) => cmd_markdown(a, &ctx),
         Commands::Comment(a) => cmd_comment(a, &ctx),
