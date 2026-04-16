@@ -551,12 +551,12 @@ impl Context {
     }
 
     fn get_q(&self, path: &str, params: &[(&str, String)]) -> Result<Value, String> {
-        let url = self.url(path);
-        let mut req = self.http.get(&url);
-        for (k, v) in params {
-            req = req.query(&[(*k, v.as_str())]);
+        let mut url = self.url(path);
+        if !params.is_empty() {
+            let qs: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+            url = format!("{}?{}", url, qs.join("&"));
         }
-        self.send(req, &url)
+        self.send(self.http.get(&url), &url)
     }
 
     fn auth_get(&self, path: &str) -> Result<Value, String> {
@@ -572,12 +572,12 @@ impl Context {
 
     fn auth_get_q(&self, path: &str, params: &[(&str, String)]) -> Result<Value, String> {
         let token = self.token_or_error()?;
-        let url = self.url(path);
-        let mut req = self.http.get(&url).header("X-API-Key", token);
-        for (k, v) in params {
-            req = req.query(&[(*k, v.as_str())]);
+        let mut url = self.url(path);
+        if !params.is_empty() {
+            let qs: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+            url = format!("{}?{}", url, qs.join("&"));
         }
-        self.send(req, &url)
+        self.send(self.http.get(&url).header("X-API-Key", token), &url)
     }
 
     fn post(&self, path: &str, body: Value) -> Result<Value, String> {
