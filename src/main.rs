@@ -2233,8 +2233,25 @@ fn cmd_update(http: &HttpClient) -> Result<(), String> {
     let tmp_path = exe_path.with_extension("tmp");
 
     {
-        let mut f = std::fs::File::create(&tmp_path)
-            .map_err(|e| format!("Cannot write to {}: {}", tmp_path.display(), e))?;
+        let f = std::fs::File::create(&tmp_path);
+
+        #[cfg(unix)]
+        let f = match f {
+            Err(ref e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("Permission denied — retrying with sudo...");
+                let exe = std::env::current_exe()
+                    .map_err(|e| format!("Cannot determine executable path: {}", e))?;
+                let status = std::process::Command::new("sudo")
+                    .arg(exe)
+                    .arg("update")
+                    .status()
+                    .map_err(|e| format!("Failed to run sudo: {}", e))?;
+                process::exit(status.code().unwrap_or(1));
+            }
+            other => other,
+        };
+
+        let mut f = f.map_err(|e| format!("Cannot write to {}: {}", tmp_path.display(), e))?;
         f.write_all(&bytes)
             .map_err(|e| format!("Failed to write binary: {}", e))?;
     }
