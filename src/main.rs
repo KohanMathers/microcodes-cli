@@ -1034,9 +1034,9 @@ fn cmd_patch(args: PatchArgs, ctx: &Context) -> Result<(), String> {
         return Err("No fields specified to patch. Use --title, --description, or --field key=value.".to_string());
     }
 
-    let data = ctx.auth_post(
-        &format!("/api/snippets/{}/patch", args.id),
-        json!({ "patch": ops }),
+    let data = ctx.auth_patch(
+        "/api/submit",
+        json!({ "id": args.id, "patch": ops }),
     )?;
 
     if ctx.json_output {
