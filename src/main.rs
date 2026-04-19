@@ -1,3 +1,5 @@
+mod tui;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use reqwest::blocking::Client as HttpClient;
@@ -14,7 +16,9 @@ const DEFAULT_BASE_URL: &str = "https://micro.codes";
     name = "microcodes",
     about = "Interact with the Microcodes API from the terminal",
     version,
-    propagate_version = true
+    propagate_version = true,
+    subcommand_required = false,
+    arg_required_else_help = false
 )]
 struct Cli {
     /// Output raw JSON instead of formatted output
@@ -26,7 +30,7 @@ struct Cli {
     plain: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -543,11 +547,7 @@ impl Context {
         format!("{}{}", self.base_url, path)
     }
 
-    fn send(
-        &self,
-        req: reqwest::blocking::RequestBuilder,
-        url: &str,
-    ) -> Result<Value, String> {
+    fn send(&self, req: reqwest::blocking::RequestBuilder, url: &str) -> Result<Value, String> {
         let resp = req
             .send()
             .map_err(|e| format!("Connection error ({}): {}", url, e))?;
@@ -571,12 +571,7 @@ impl Context {
     fn auth_get(&self, path: &str) -> Result<Value, String> {
         let token = self.token_or_error()?;
         let url = self.url(path);
-        self.send(
-            self.http
-                .get(&url)
-                .header("X-API-Key", token),
-            &url,
-        )
+        self.send(self.http.get(&url).header("X-API-Key", token), &url)
     }
 
     fn auth_get_q(&self, path: &str, params: &[(&str, String)]) -> Result<Value, String> {
@@ -598,10 +593,7 @@ impl Context {
         let token = self.token_or_error()?;
         let url = self.url(path);
         self.send(
-            self.http
-                .post(&url)
-                .header("X-API-Key", token)
-                .json(&body),
+            self.http.post(&url).header("X-API-Key", token).json(&body),
             &url,
         )
     }
@@ -609,22 +601,14 @@ impl Context {
     fn auth_delete(&self, path: &str) -> Result<Value, String> {
         let token = self.token_or_error()?;
         let url = self.url(path);
-        self.send(
-            self.http
-                .delete(&url)
-                .header("X-API-Key", token),
-            &url,
-        )
+        self.send(self.http.delete(&url).header("X-API-Key", token), &url)
     }
 
     fn auth_put(&self, path: &str, body: Value) -> Result<Value, String> {
         let token = self.token_or_error()?;
         let url = self.url(path);
         self.send(
-            self.http
-                .put(&url)
-                .header("X-API-Key", token)
-                .json(&body),
+            self.http.put(&url).header("X-API-Key", token).json(&body),
             &url,
         )
     }
@@ -633,10 +617,7 @@ impl Context {
         let token = self.token_or_error()?;
         let url = self.url(path);
         self.send(
-            self.http
-                .patch(&url)
-                .header("X-API-Key", token)
-                .json(&body),
+            self.http.patch(&url).header("X-API-Key", token).json(&body),
             &url,
         )
     }
@@ -700,16 +681,37 @@ fn fmt_ts(v: &Value, key: &str) -> String {
     let mut y = 1970u32;
     let mut rem = days as u32;
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-        if rem < days_in_year { break; }
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if rem < days_in_year {
+            break;
+        }
         rem -= days_in_year;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [31u32, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31u32,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0usize;
     for &md in &month_days {
-        if rem < md { break; }
+        if rem < md {
+            break;
+        }
         rem -= md;
         m += 1;
     }
@@ -733,16 +735,37 @@ fn uuid7_created(id: &str) -> String {
     let mut y = 1970u32;
     let mut rem = days as u32;
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-        if rem < days_in_year { break; }
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if rem < days_in_year {
+            break;
+        }
         rem -= days_in_year;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [31u32, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31u32,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0usize;
     for &md in &month_days {
-        if rem < md { break; }
+        if rem < md {
+            break;
+        }
         rem -= md;
         m += 1;
     }
@@ -815,8 +838,7 @@ fn confirm(prompt: &str) -> bool {
 
 fn read_stdin_or_file(file: Option<&str>) -> Result<String, String> {
     if let Some(path) = file {
-        std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file '{}': {}", path, e))
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read file '{}': {}", path, e))
     } else {
         let mut buf = String::new();
         io::stdin()
@@ -1011,8 +1033,8 @@ fn build_folder_payload(folder: &str) -> Result<Value, String> {
     let meta_path = folder_path.join("meta.json");
     let meta_raw = std::fs::read_to_string(&meta_path)
         .map_err(|e| format!("Failed to read meta.json: {}", e))?;
-    let mut payload: Value = serde_json::from_str(&meta_raw)
-        .map_err(|e| format!("Invalid JSON in meta.json: {}", e))?;
+    let mut payload: Value =
+        serde_json::from_str(&meta_raw).map_err(|e| format!("Invalid JSON in meta.json: {}", e))?;
 
     let mut records: Vec<Value> = Vec::new();
     let mut lang_counts: HashMap<&'static str, usize> = HashMap::new();
@@ -1050,7 +1072,11 @@ fn build_folder_payload(folder: &str) -> Result<Value, String> {
         payload["records"] = Value::Array(records);
     }
 
-    if let Some(dominant) = lang_counts.into_iter().max_by_key(|(_, c)| *c).map(|(l, _)| l) {
+    if let Some(dominant) = lang_counts
+        .into_iter()
+        .max_by_key(|(_, c)| *c)
+        .map(|(l, _)| l)
+    {
         payload["language"] = json!({ "name": dominant });
     }
 
@@ -1089,18 +1115,10 @@ fn cmd_submit(args: SubmitArgs, ctx: &Context) -> Result<(), String> {
                     .iter()
                     .filter_map(|v| v.as_str())
                     .filter(|field| *field != "id")
-                    .filter(|field| {
-                        payload
-                            .get(field)
-                            .map(|v| v.is_null())
-                            .unwrap_or(true)
-                    })
+                    .filter(|field| payload.get(field).map(|v| v.is_null()).unwrap_or(true))
                     .collect();
                 if !missing.is_empty() {
-                    return Err(format!(
-                        "Missing required fields: {}",
-                        missing.join(", ")
-                    ));
+                    return Err(format!("Missing required fields: {}", missing.join(", ")));
                 }
             }
         }
@@ -1154,20 +1172,23 @@ fn cmd_patch(args: PatchArgs, ctx: &Context) -> Result<(), String> {
         if let Some((k, v)) = kv.split_once('=') {
             ops.push(json!({"op": "replace", "path": format!("/{k}"), "value": v}));
         } else {
-            return Err(format!("Invalid --field format '{}': expected key=value", kv));
+            return Err(format!(
+                "Invalid --field format '{}': expected key=value",
+                kv
+            ));
         }
     }
 
     if ops.is_empty() {
-        return Err("No fields specified to patch. Use --title, --description, or --field key=value.".to_string());
+        return Err(
+            "No fields specified to patch. Use --title, --description, or --field key=value."
+                .to_string(),
+        );
     }
 
     let body = json!({"patch": ops});
 
-    let data = ctx.auth_patch(
-        &format!("/api/snippets/{}", args.id),
-        body,
-    )?;
+    let data = ctx.auth_patch(&format!("/api/snippets/{}", args.id), body)?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1204,10 +1225,7 @@ fn cmd_versions(id: &str, ctx: &Context) -> Result<(), String> {
 fn cmd_diff(args: DiffArgs, ctx: &Context) -> Result<(), String> {
     let data = ctx.auth_get_q(
         &format!("/api/snippets/{}/diff", args.id),
-        &[
-            ("from", args.from.to_string()),
-            ("to", args.to.to_string()),
-        ],
+        &[("from", args.from.to_string()), ("to", args.to.to_string())],
     )?;
 
     if ctx.json_output {
@@ -1215,7 +1233,10 @@ fn cmd_diff(args: DiffArgs, ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
-    let from = data.get("fromVersion").and_then(|v| v.as_i64()).unwrap_or(0);
+    let from = data
+        .get("fromVersion")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let to = data.get("toVersion").and_then(|v| v.as_i64()).unwrap_or(0);
     println!("diff v{} → v{}", from, to);
 
@@ -1284,7 +1305,13 @@ fn cmd_bookmark(id: &str, value: bool, ctx: &Context) -> Result<(), String> {
     let msg = data
         .get("userBookmarked")
         .and_then(|v| v.as_bool())
-        .map(|b| if b { "Bookmarked." } else { "Bookmark removed." })
+        .map(|b| {
+            if b {
+                "Bookmarked."
+            } else {
+                "Bookmark removed."
+            }
+        })
         .unwrap_or("Done.");
 
     print_success(msg);
@@ -1429,12 +1456,14 @@ fn cmd_lists(args: ListsArgs, ctx: &Context) -> Result<(), String> {
         Some(ListsAction::User { user_id }) => cmd_lists_user(&user_id, ctx),
         Some(ListsAction::Update(a)) => cmd_lists_update(a, ctx),
         Some(ListsAction::Delete(a)) => cmd_lists_delete(a, ctx),
-        Some(ListsAction::Add { list_id, snippet_id }) => {
-            cmd_lists_add(&list_id, &snippet_id, ctx)
-        }
-        Some(ListsAction::Remove { list_id, snippet_id }) => {
-            cmd_lists_remove(&list_id, &snippet_id, ctx)
-        }
+        Some(ListsAction::Add {
+            list_id,
+            snippet_id,
+        }) => cmd_lists_add(&list_id, &snippet_id, ctx),
+        Some(ListsAction::Remove {
+            list_id,
+            snippet_id,
+        }) => cmd_lists_remove(&list_id, &snippet_id, ctx),
     }
 }
 
@@ -1573,8 +1602,7 @@ fn cmd_lists_add(list_id: &str, snippet_id: &str, ctx: &Context) -> Result<(), S
 }
 
 fn cmd_lists_remove(list_id: &str, snippet_id: &str, ctx: &Context) -> Result<(), String> {
-    let data = ctx
-        .auth_delete(&format!("/api/lists/{}/snippets/{}", list_id, snippet_id))?;
+    let data = ctx.auth_delete(&format!("/api/lists/{}/snippets/{}", list_id, snippet_id))?;
 
     if ctx.json_output {
         print_json(&data);
@@ -1731,11 +1759,7 @@ fn cmd_requests_status(args: RequestStatusArgs, ctx: &Context) -> Result<(), Str
     Ok(())
 }
 
-fn cmd_requests_fulfill(
-    request_id: &str,
-    snippet_id: &str,
-    ctx: &Context,
-) -> Result<(), String> {
+fn cmd_requests_fulfill(request_id: &str, snippet_id: &str, ctx: &Context) -> Result<(), String> {
     let data = ctx.auth_put(
         &format!("/api/requests/{}/fulfillment", request_id),
         json!({"snippetId": snippet_id}),
@@ -1842,7 +1866,10 @@ fn cmd_passkeys(args: PasskeysArgs, ctx: &Context) -> Result<(), String> {
             }
             Ok(())
         }
-        Some(PasskeysAction::Rename { credential_id, label }) => {
+        Some(PasskeysAction::Rename {
+            credential_id,
+            label,
+        }) => {
             let data = ctx.auth_post(
                 "/api/auth/passkeys/rename",
                 json!({"credentialId": credential_id, "label": label}),
@@ -1954,7 +1981,12 @@ fn cmd_unlink(provider: &str, ctx: &Context) -> Result<(), String> {
 }
 
 fn cmd_delete_account(ctx: &Context) -> Result<(), String> {
-    println!("{}", "WARNING: This will permanently delete your account and all your data.".red().bold());
+    println!(
+        "{}",
+        "WARNING: This will permanently delete your account and all your data."
+            .red()
+            .bold()
+    );
     println!();
     print!("Type {} to confirm: ", "DELETE MY ACCOUNT".red().bold());
     io::stdout().flush().ok();
@@ -2303,8 +2335,8 @@ fn main() {
     let use_color = !cli.plain && io::stdout().is_terminal();
     colored::control::set_override(use_color);
 
-    let base_url = std::env::var("MICROCODES_BASE_URL")
-        .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+    let base_url =
+        std::env::var("MICROCODES_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
     let token = std::env::var("MICROCODES_API_TOKEN").ok();
 
     let ctx = Context {
@@ -2317,7 +2349,15 @@ fn main() {
             .expect("Failed to build HTTP client"),
     };
 
-    let result = match cli.command {
+    let Some(command) = cli.command else {
+        if let Err(e) = tui::run_tui(ctx.base_url, ctx.token) {
+            eprintln!("{} {}", "Error:".red().bold(), e);
+            process::exit(1);
+        }
+        return;
+    };
+
+    let result = match command {
         Commands::Search(a) => cmd_search(a, &ctx),
         Commands::Get { id } => cmd_get(&id, &ctx),
         Commands::Ids { ids } => cmd_ids(&ids, &ctx),
