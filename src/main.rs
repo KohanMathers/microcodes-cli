@@ -116,9 +116,6 @@ enum Commands {
     /// Session operations (authenticated)
     Sessions(SessionsArgs),
 
-    /// Passkey operations (authenticated)
-    Passkeys(PasskeysArgs),
-
     /// Change your username (authenticated)
     Username {
         /// New username
@@ -192,9 +189,12 @@ struct SearchArgs {
     /// Sort order: relevance, oldest, newest, upvotes
     #[arg(long)]
     sort: Option<String>,
-    /// Page number
+    /// Number of results per page (max 100)
     #[arg(long)]
-    page: Option<u32>,
+    limit: Option<u32>,
+    /// Pagination offset
+    #[arg(long)]
+    offset: Option<u32>,
 }
 
 #[derive(Args)]
@@ -255,7 +255,7 @@ impl VoteDirection {
         match self {
             Self::Up => "up",
             Self::Down => "down",
-            Self::Remove => "remove",
+            Self::Remove => "none",
         }
     }
 }
@@ -475,31 +475,6 @@ struct SessionsArgs {
 enum SessionsAction {
     /// Disconnect all active sessions (authenticated)
     Disconnect {
-        /// Skip confirmation prompt
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-}
-
-#[derive(Args)]
-struct PasskeysArgs {
-    #[command(subcommand)]
-    action: Option<PasskeysAction>,
-}
-
-#[derive(Subcommand)]
-enum PasskeysAction {
-    /// Rename a passkey (authenticated)
-    Rename {
-        /// Credential ID
-        credential_id: String,
-        /// New label
-        label: String,
-    },
-    /// Delete a passkey (authenticated)
-    Delete {
-        /// Credential ID
-        credential_id: String,
         /// Skip confirmation prompt
         #[arg(long, short = 'y')]
         yes: bool,
@@ -916,8 +891,11 @@ fn cmd_search(args: SearchArgs, ctx: &Context) -> Result<(), String> {
     if let Some(v) = args.sort {
         params.push(("sort", v));
     }
-    if let Some(v) = args.page {
-        params.push(("page", v.to_string()));
+    if let Some(v) = args.limit {
+        params.push(("limit", v.to_string()));
+    }
+    if let Some(v) = args.offset {
+        params.push(("offset", v.to_string()));
     }
 
     let data = ctx.get_q("/api/snippets", &params)?;
@@ -927,11 +905,13 @@ fn cmd_search(args: SearchArgs, ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
-    let snippets = data.as_array().cloned().unwrap_or_default();
+    let snippets = data["items"].as_array().cloned().unwrap_or_default();
     if snippets.is_empty() {
         println!("No results found.");
     } else {
+        let total = data["total"].as_i64().unwrap_or(snippets.len() as i64);
         print_snippet_table(&snippets);
+        println!("  ({} of {} results)", snippets.len(), total);
     }
     Ok(())
 }
@@ -979,7 +959,7 @@ fn cmd_my_snippets(ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
-    let snippets = data.as_array().cloned().unwrap_or_default();
+    let snippets = data["items"].as_array().cloned().unwrap_or_default();
     if snippets.is_empty() {
         println!("You have no snippets.");
     } else {
@@ -1433,17 +1413,21 @@ fn cmd_lists(args: ListsArgs, ctx: &Context) -> Result<(), String> {
                 print_json(&data);
                 return Ok(());
             }
-            let lists = data.as_array().cloned().unwrap_or_default();
+            let lists = data["items"].as_array().cloned().unwrap_or_default();
             if lists.is_empty() {
                 println!("You have no lists.");
             } else {
                 let rows: Vec<Vec<String>> = lists
                     .iter()
                     .map(|l| {
+                        let snippet_count = l["snippetIds"]
+                            .as_array()
+                            .map(|a| a.len().to_string())
+                            .unwrap_or_default();
                         vec![
                             str_val(l, "id"),
                             truncate(&str_val(l, "title"), 40),
-                            num_val(l, "snippetCount"),
+                            snippet_count,
                         ]
                     })
                     .collect();
@@ -1497,21 +1481,19 @@ fn cmd_lists_get(id: &str, ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
+    let snippet_count = data["snippetIds"]
+        .as_array()
+        .map(|a| a.len().to_string())
+        .unwrap_or_default();
+    let unlisted = data["unlisted"].as_bool().map(|b| b.to_string()).unwrap_or_default();
+
     print_detail(&[
         ("Title", str_val(&data, "title")),
         ("ID", str_val(&data, "id")),
         ("Description", str_val(&data, "description")),
-        ("Snippets", num_val(&data, "snippetCount")),
-        ("Owner", str_val(&data, "owner")),
-        ("Created", str_val(&data, "createdAt")),
+        ("Snippets", snippet_count),
+        ("Unlisted", unlisted),
     ]);
-
-    if let Some(snippets) = data.get("snippets").and_then(|v| v.as_array()) {
-        if !snippets.is_empty() {
-            println!();
-            print_snippet_table(snippets);
-        }
-    }
     Ok(())
 }
 
@@ -1523,14 +1505,18 @@ fn cmd_lists_user(user_id: &str, ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
 
-    let lists = data.as_array().cloned().unwrap_or_default();
+    let lists = data["items"].as_array().cloned().unwrap_or_default();
     let rows: Vec<Vec<String>> = lists
         .iter()
         .map(|l| {
+            let snippet_count = l["snippetIds"]
+                .as_array()
+                .map(|a| a.len().to_string())
+                .unwrap_or_default();
             vec![
                 str_val(l, "id"),
                 truncate(&str_val(l, "title"), 40),
-                num_val(l, "snippetCount"),
+                snippet_count,
             ]
         })
         .collect();
@@ -1624,7 +1610,7 @@ fn cmd_requests(args: RequestsArgs, ctx: &Context) -> Result<(), String> {
                 params.push(("status", v));
             }
             if let Some(v) = args.user {
-                params.push(("user", v));
+                params.push(("userId", v));
             }
             if let Some(v) = args.limit {
                 params.push(("limit", v.to_string()));
@@ -1640,7 +1626,7 @@ fn cmd_requests(args: RequestsArgs, ctx: &Context) -> Result<(), String> {
                 return Ok(());
             }
 
-            let reqs = data.as_array().cloned().unwrap_or_default();
+            let reqs = data["items"].as_array().cloned().unwrap_or_default();
             if reqs.is_empty() {
                 println!("No requests found.");
             } else {
@@ -1651,11 +1637,11 @@ fn cmd_requests(args: RequestsArgs, ctx: &Context) -> Result<(), String> {
                             str_val(r, "id"),
                             truncate(&str_val(r, "title"), 40),
                             str_val(r, "status"),
-                            str_val(r, "submitter"),
+                            str_val(r, "userId"),
                         ]
                     })
                     .collect();
-                print_table(&["ID", "TITLE", "STATUS", "SUBMITTER"], &rows);
+                print_table(&["ID", "TITLE", "STATUS", "USER ID"], &rows);
             }
             Ok(())
         }
@@ -1806,19 +1792,22 @@ fn cmd_sessions(args: SessionsArgs, ctx: &Context) -> Result<(), String> {
                 print_json(&data);
                 return Ok(());
             }
-            let sessions = data.as_array().cloned().unwrap_or_default();
+            let sessions = data["items"].as_array().cloned().unwrap_or_default();
             let rows: Vec<Vec<String>> = sessions
                 .iter()
                 .map(|s| {
+                    let current = if s["current"].as_bool().unwrap_or(false) {
+                        " (current)".to_string()
+                    } else {
+                        String::new()
+                    };
                     vec![
-                        str_val(s, "id"),
-                        str_val(s, "userAgent"),
-                        str_val(s, "ip"),
-                        str_val(s, "createdAt"),
+                        format!("{}{}", str_val(s, "id"), current),
+                        fmt_ts(s, "createdAt"),
                     ]
                 })
                 .collect();
-            print_table(&["ID", "USER AGENT", "IP", "CREATED"], &rows);
+            print_table(&["ID", "CREATED"], &rows);
             Ok(())
         }
         Some(SessionsAction::Disconnect { yes }) => {
@@ -1835,69 +1824,6 @@ fn cmd_sessions(args: SessionsArgs, ctx: &Context) -> Result<(), String> {
                 return Ok(());
             }
             print_success("All sessions disconnected.");
-            Ok(())
-        }
-    }
-}
-
-fn cmd_passkeys(args: PasskeysArgs, ctx: &Context) -> Result<(), String> {
-    match args.action {
-        None => {
-            let data = ctx.auth_get("/api/auth/passkeys/list")?;
-            if ctx.json_output {
-                print_json(&data);
-                return Ok(());
-            }
-            let keys = data.as_array().cloned().unwrap_or_default();
-            let rows: Vec<Vec<String>> = keys
-                .iter()
-                .map(|k| {
-                    vec![
-                        str_val(k, "id"),
-                        str_val(k, "label"),
-                        str_val(k, "createdAt"),
-                    ]
-                })
-                .collect();
-            if rows.is_empty() {
-                println!("No passkeys registered.");
-            } else {
-                print_table(&["ID", "LABEL", "CREATED"], &rows);
-            }
-            Ok(())
-        }
-        Some(PasskeysAction::Rename {
-            credential_id,
-            label,
-        }) => {
-            let data = ctx.auth_post(
-                "/api/auth/passkeys/rename",
-                json!({"credentialId": credential_id, "label": label}),
-            )?;
-            if ctx.json_output {
-                print_json(&data);
-                return Ok(());
-            }
-            print_success("Passkey renamed.");
-            Ok(())
-        }
-        Some(PasskeysAction::Delete { credential_id, yes }) => {
-            if !yes {
-                println!("About to delete passkey: {}", credential_id.yellow());
-                if !confirm("Are you sure?") {
-                    println!("Aborted.");
-                    return Ok(());
-                }
-            }
-            let data = ctx.auth_post(
-                "/api/auth/passkeys/delete",
-                json!({"credentialId": credential_id}),
-            )?;
-            if ctx.json_output {
-                print_json(&data);
-                return Ok(());
-            }
-            print_success("Passkey deleted.");
             Ok(())
         }
     }
@@ -2377,7 +2303,6 @@ fn main() {
         Commands::Requests(a) => cmd_requests(a, &ctx),
         Commands::Whoami => cmd_whoami(&ctx),
         Commands::Sessions(a) => cmd_sessions(a, &ctx),
-        Commands::Passkeys(a) => cmd_passkeys(a, &ctx),
         Commands::Username { username } => cmd_username(&username, &ctx),
         Commands::Bio { bio } => cmd_bio(&bio, &ctx),
         Commands::Privacy(a) => cmd_privacy(a, &ctx),
