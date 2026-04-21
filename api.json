@@ -1464,7 +1464,7 @@
 			{
 				"method": "Post",
 				"path": "/api/auth/device/token",
-				"description": "Poll for device authorization completion. Returns `authorization_pending`, `slow_down`, `expired`, or an API key for `x-api-key` authentication.",
+				"description": "Poll for device authorization completion. Returns `authorization_pending`, `slow_down`, `expired`, or an API key for `MICRO-API-KEY` authentication.",
 				"auth": "None",
 				"cookie_flow_only": false,
 				"params": [
@@ -1481,13 +1481,13 @@
 					{
 						"name": "apiKey",
 						"field_type": "string",
-						"description": "API key to send in the `x-api-key` header after approval.",
+						"description": "API key to send in the `MICRO-API-KEY` header after approval.",
 						"example": ""
 					},
 					{
 						"name": "tokenType",
 						"field_type": "string",
-						"description": "Always `x-api-key`.",
+						"description": "Always `MICRO-API-KEY`.",
 						"example": ""
 					}
 				],
@@ -1501,7 +1501,44 @@
 						]
 					},
 					"request_body": "{\"deviceCode\":\"...\"}",
-					"response_body": "{ \"apiKey\": \"...\", \"tokenType\": \"x-api-key\" }"
+					"response_body": "{ \"apiKey\": \"...\", \"tokenType\": \"MICRO-API-KEY\" }"
+				}
+			},
+			{
+				"method": "Get",
+				"path": "/api/users/{username}",
+				"description": "Get a public user profile by username. Private profiles return 404 to other viewers, and hidden fields stay omitted unless the caller is the owner.",
+				"auth": "None",
+				"cookie_flow_only": false,
+				"params": [
+					{
+						"name": "username",
+						"location": "Path",
+						"param_type": "string",
+						"required": true,
+						"description": "Username to resolve.",
+						"example": "alice"
+					}
+				],
+				"response_fields": [
+					{
+						"name": "(shape)",
+						"field_type": "object",
+						"description": "Profile view with `id`, `username`, `avatarUrl`, `profileUrl`, optional `description`, and viewer-specific visibility flags for bio, snippets, lists, and comments.",
+						"example": ""
+					}
+				],
+				"example": {
+					"request": {
+						"method": "Get",
+						"path": "/api/users/alice",
+						"auth": "None",
+						"headers": [
+
+						]
+					},
+					"request_body": null,
+					"response_body": "{ \"id\": \"...\", \"username\": \"alice\", \"avatarUrl\": \"https://example.com/avatar.png\", \"description\": \"Full-stack developer\", \"profileUrl\": \"/@alice\", \"bioVisibleForViewer\": true, \"snippetsVisibleForViewer\": true, \"listsVisibleForViewer\": true, \"commentsVisibleForViewer\": true, \"noindex\": false }"
 				}
 			},
 			{
