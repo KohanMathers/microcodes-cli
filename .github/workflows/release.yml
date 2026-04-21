@@ -115,10 +115,15 @@ jobs:
             RANGE="${PREV_TAG_COMMIT}..HEAD~1"
           fi
 
-          NOTES=$(git log "$RANGE" --format="- %s" --reverse 2>/dev/null || true)
+          # Include the current commit message (stripped of [version]) as the first entry
+          CURRENT_MSG=$(git log -1 --format="%s" | sed 's/ \[[0-9]*\.[0-9]*\.[0-9]*\]//')
+          RANGE_NOTES=$(git log "$RANGE" --format="- %s" --reverse 2>/dev/null || true)
 
-          if [ -z "$NOTES" ]; then
-            NOTES="- Initial release"
+          if [ -n "$RANGE_NOTES" ]; then
+            NOTES="${RANGE_NOTES}
+- ${CURRENT_MSG}"
+          else
+            NOTES="- ${CURRENT_MSG}"
           fi
 
           # Write notes to a file (avoids multiline env var issues)

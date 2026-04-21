@@ -50,23 +50,29 @@ cargo build --release
 
 ## Authentication
 
-Authenticated endpoints accept an API key sent as the `X-API-Key` header. Set the `MICROCODES_API_TOKEN` environment variable and the CLI sends it automatically:
+The easiest way to log in is with the device flow command:
+
+```bash
+mcodes login
+```
+
+This prints a URL and a short confirmation code. Open the URL in your browser, approve the request, and the CLI saves your API key automatically. No copying tokens by hand.
+
+If you prefer to set a token manually, use the `token` command:
+
+```bash
+mcodes token your_key_here
+```
+
+Both commands write the key to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) and tell you to source it or open a new terminal. On Windows the key is written to your user environment variables.
+
+You can also set the variable directly without persisting it:
 
 ```bash
 export MICROCODES_API_TOKEN=your_key_here
 ```
 
-Add it to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
-
-On Windows:
-
-```powershell
-$env:MICROCODES_API_TOKEN = "your_key_here"
-# Or permanently:
-[System.Environment]::SetEnvironmentVariable("MICROCODES_API_TOKEN", "your_key_here", "User")
-```
-
-If you run an authenticated command without the token set, you'll see:
+If you run an authenticated command without a token set, you'll see:
 
 ```
 Error: MICROCODES_API_TOKEN is not set.
@@ -453,31 +459,6 @@ Disconnect all active sessions. Requires authentication.
 ```bash
 mcodes sessions disconnect
 mcodes sessions disconnect --yes
-```
-
-#### `mcodes passkeys`
-
-List registered passkeys. Requires authentication.
-
-```bash
-mcodes passkeys
-```
-
-#### `mcodes passkeys rename <credential-id> "<label>"`
-
-Rename a passkey. Requires authentication.
-
-```bash
-mcodes passkeys rename cred123 "MacBook Touch ID"
-```
-
-#### `mcodes passkeys delete <credential-id>`
-
-Delete a passkey. Requires authentication.
-
-```bash
-mcodes passkeys delete cred123
-mcodes passkeys delete cred123 --yes
 ```
 
 #### `mcodes username "<new-username>"`

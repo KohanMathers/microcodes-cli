@@ -160,6 +160,9 @@ enum Commands {
         message: String,
     },
 
+    /// Log in via browser-based device flow
+    Login,
+
     /// Check for a newer release and update the binary if available
     Update,
 
@@ -546,7 +549,7 @@ impl Context {
     fn auth_get(&self, path: &str) -> Result<Value, String> {
         let token = self.token_or_error()?;
         let url = self.url(path);
-        self.send(self.http.get(&url).header("X-API-Key", token), &url)
+        self.send(self.http.get(&url).header("MICRO-API-KEY", token), &url)
     }
 
     fn auth_get_q(&self, path: &str, params: &[(&str, String)]) -> Result<Value, String> {
@@ -556,7 +559,7 @@ impl Context {
             let qs: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
             url = format!("{}?{}", url, qs.join("&"));
         }
-        self.send(self.http.get(&url).header("X-API-Key", token), &url)
+        self.send(self.http.get(&url).header("MICRO-API-KEY", token), &url)
     }
 
     fn post(&self, path: &str, body: Value) -> Result<Value, String> {
@@ -568,7 +571,7 @@ impl Context {
         let token = self.token_or_error()?;
         let url = self.url(path);
         self.send(
-            self.http.post(&url).header("X-API-Key", token).json(&body),
+            self.http.post(&url).header("MICRO-API-KEY", token).json(&body),
             &url,
         )
     }
@@ -576,14 +579,14 @@ impl Context {
     fn auth_delete(&self, path: &str) -> Result<Value, String> {
         let token = self.token_or_error()?;
         let url = self.url(path);
-        self.send(self.http.delete(&url).header("X-API-Key", token), &url)
+        self.send(self.http.delete(&url).header("MICRO-API-KEY", token), &url)
     }
 
     fn auth_put(&self, path: &str, body: Value) -> Result<Value, String> {
         let token = self.token_or_error()?;
         let url = self.url(path);
         self.send(
-            self.http.put(&url).header("X-API-Key", token).json(&body),
+            self.http.put(&url).header("MICRO-API-KEY", token).json(&body),
             &url,
         )
     }
@@ -592,7 +595,7 @@ impl Context {
         let token = self.token_or_error()?;
         let url = self.url(path);
         self.send(
-            self.http.patch(&url).header("X-API-Key", token).json(&body),
+            self.http.patch(&url).header("MICRO-API-KEY", token).json(&body),
             &url,
         )
     }
@@ -1979,6 +1982,69 @@ fn cmd_report(kind: &str, id: &str, reason: &str, ctx: &Context) -> Result<(), S
     Ok(())
 }
 
+fn cmd_login(ctx: &Context) -> Result<(), String> {
+    let auth = ctx.post("/api/auth/device/authorize", json!({}))?;
+
+    let device_code = auth["deviceCode"]
+        .as_str()
+        .ok_or("Missing deviceCode in authorize response")?
+        .to_string();
+    let user_code = auth["userCode"]
+        .as_str()
+        .ok_or("Missing userCode in authorize response")?;
+    let verify_url = auth["verificationUriComplete"]
+        .as_str()
+        .ok_or("Missing verificationUriComplete in authorize response")?;
+    let mut interval_secs = auth["interval"].as_u64().unwrap_or(5);
+
+    println!();
+    println!("  Open this URL to log in:");
+    println!("  {}", verify_url.bold());
+    println!();
+    println!("  Confirmation code: {}", user_code.yellow().bold());
+    println!();
+
+    let poll_url = ctx.url("/api/auth/device/token");
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+
+        let resp = ctx
+            .http
+            .post(&poll_url)
+            .json(&json!({ "deviceCode": device_code }))
+            .send()
+            .map_err(|e| format!("Connection error: {}", e))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(json!({}));
+
+        if status.is_success() {
+            let api_key = body["apiKey"]
+                .as_str()
+                .ok_or("Missing apiKey in token response")?;
+            persist_token(api_key)?;
+            return Ok(());
+        }
+
+        let error = body["error"].as_str().unwrap_or("");
+
+        match error {
+            "authorization_pending" => continue,
+            "slow_down" => {
+                interval_secs = body["interval"].as_u64().unwrap_or(interval_secs + 5);
+                continue;
+            }
+            "access_denied" => return Err("Login denied: the request was rejected.".to_string()),
+            "expired" => return Err("Device code expired before authorization was granted.".to_string()),
+            _ => return Err(format!("Unexpected device auth error: {}", error)),
+        }
+    }
+}
+
 fn cmd_token(token: &str) -> Result<(), String> {
     persist_token(token)
 }
@@ -2311,6 +2377,7 @@ fn main() {
         Commands::Health => cmd_health(&ctx),
         Commands::Report { kind, id, reason } => cmd_report(&kind, &id, &reason, &ctx),
         Commands::Feedback { message } => cmd_feedback(&message, &ctx),
+        Commands::Login => cmd_login(&ctx),
         Commands::Update => cmd_update(&ctx.http),
         Commands::Token { token } => cmd_token(&token),
     };
