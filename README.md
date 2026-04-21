@@ -541,6 +541,14 @@ Send feedback to the Microcodes team. Requires authentication.
 mcodes feedback "Would love to see a dark mode API endpoint"
 ```
 
+#### `mcodes user <username>`
+
+Get info about a user
+
+```bash
+mcodes user KohanMathers
+```
+
 ---
 
 ## Output formats

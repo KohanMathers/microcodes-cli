@@ -171,6 +171,12 @@ enum Commands {
         /// Your Microcodes API token
         token: String,
     },
+
+    /// Get information about a user
+    User {
+        /// The username to resolve
+        username: String,
+    }
 }
 
 #[derive(Args)]
@@ -1787,6 +1793,25 @@ fn cmd_whoami(ctx: &Context) -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_user(username: &str, ctx: &Context) -> Result<(), String> {
+    let data = ctx.get(&format!("/api/users/{}", username))?;
+
+    if ctx.json_output {
+        print_json(&data);
+        return Ok(());
+    }
+
+    let id = str_val(&data, "id");
+    let created = uuid7_created(&id);
+    print_detail(&[
+        ("Username", str_val(&data, "username")),
+        ("ID", id),
+        ("Bio", str_val(&data, "description")),
+        ("Created", created),
+    ]);
+    Ok(())
+}
+
 fn cmd_sessions(args: SessionsArgs, ctx: &Context) -> Result<(), String> {
     match args.action {
         None => {
@@ -2380,6 +2405,7 @@ fn main() {
         Commands::Login => cmd_login(&ctx),
         Commands::Update => cmd_update(&ctx.http),
         Commands::Token { token } => cmd_token(&token),
+        Commands::User { username } => cmd_user(&username, &ctx)
     };
 
     if let Err(e) = result {
