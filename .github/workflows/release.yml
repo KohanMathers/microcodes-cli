@@ -120,8 +120,7 @@ jobs:
           RANGE_NOTES=$(git log "$RANGE" --format="- %s" --reverse 2>/dev/null || true)
 
           if [ -n "$RANGE_NOTES" ]; then
-            NOTES="${RANGE_NOTES}
-- ${CURRENT_MSG}"
+            NOTES="${RANGE_NOTES}"$'\n'"- ${CURRENT_MSG}"
           else
             NOTES="- ${CURRENT_MSG}"
           fi
